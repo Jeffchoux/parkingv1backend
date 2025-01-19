@@ -1,53 +1,40 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-import os
 
 app = Flask(__name__)
 
-# Configuration de la base de données
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+# Liste simulée pour stocker les utilisateurs (base de données simulée)
+users = []
 
-# Modèle utilisateur
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
-    plate_number = db.Column(db.String(10), nullable=False)
-
-with app.app_context():
-    db.create_all()
-
-# Endpoint pour s'inscrire
 @app.route('/register', methods=['POST'])
-def register():
-    try:
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-        plate_number = data.get('plate_number')
+def register_user():
+    # Récupération des données envoyées dans la requête
+    data = request.json
 
-        if not username or not password or not plate_number:
-            return jsonify({"message": "Missing data"}), 400
+    # Debug : Afficher dans les logs les données reçues
+    print("Data received:", data)
 
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
-            return jsonify({"message": "Username already exists"}), 409
+    # Vérifier que toutes les données nécessaires sont présentes
+    if not data.get('email') or not data.get('password') or not data.get('plate_number'):
+        return jsonify({"message": "Missing data"}), 400
 
-        new_user = User(username=username, password=password, plate_number=plate_number)
-        db.session.add(new_user)
-        db.session.commit()
+    # Créer un utilisateur avec les données reçues
+    user = {
+        "id": len(users) + 1,  # Générer un ID unique
+        "email": data['email'],
+        "password": data['password'],  # ⚠️ Ne jamais stocker de mot de passe en clair dans une vraie application
+        "plate_number": data['plate_number']
+    }
 
-        return jsonify({"message": "User registered successfully"}), 201
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"message": "An error occurred"}), 500
+    # Ajouter l'utilisateur à la liste simulée
+    users.append(user)
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({"message": "Backend is running"}), 200
+    # Retourner une réponse de succès
+    return jsonify({
+        "message": "User registered successfully!",
+        "user": user
+    }), 201
 
+
+# Point d'entrée pour exécuter le serveur Flask
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
+    app.run(debug=True, host="0.0.0.0", port=5000)
