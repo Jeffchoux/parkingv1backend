@@ -1,138 +1,150 @@
 from flask import Flask, request, jsonify
-from math import radians, sin, cos, sqrt, atan2
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 # Mock databases
-users = []
-parking_slots = []
-reservations = []
-
-# Fonction pour calculer la distance entre deux points géographiques
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371  # Rayon de la Terre en kilomètres
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return R * c
+users = []  # Liste des utilisateurs enregistrés
+parking_slots = []  # Liste des emplacements de parking
+reservations = []  # Liste des réservations
+transactions = []  # Liste des transactions financières
 
 # Route : Enregistrer un utilisateur
 @app.route('/register', methods=['POST'])
 def register_user():
-    data = request.json
-    print("Data received:", data)  # Ajoute cette ligne pour afficher les données dans les logs Render
+    if not request.is_json:
+        return jsonify({"message": "Request must be JSON"}), 400
 
-    if not data:
-        return jsonify({"message": "No data received"}), 400
+    data = request.json
     if not data.get('email') or not data.get('password') or not data.get('plate_number'):
-        return jsonify({"message": "Missing data"}), 400
+        return jsonify({"message": "Missing data: email, password, or plate_number"}), 400
 
     user = {
         "id": len(users) + 1,
         "email": data['email'],
-        "password": data['password'],
-        "plate_number": data['plate_number']
+        "password": data['password'],  # Hacher les mots de passe en production !
+        "plate_number": data['plate_number'],
+        "balance": 10.0  # Solde initial pour permettre les premiers tests
     }
     users.append(user)
     return jsonify({"message": "User registered successfully!", "user": user}), 201
 
-
-# Route : Ajouter un emplacement de parking
+# Route : Ajouter une place de parking
 @app.route('/add_parking_slot', methods=['POST'])
 def add_parking_slot():
+    if not request.is_json:
+        return jsonify({"message": "Request must be JSON"}), 400
+
     data = request.json
-    if not data.get('latitude') or not data.get('longitude'):
-        return jsonify({"message": "Missing data: latitude and longitude are required"}), 400
+    if not data.get('latitude') or not data.get('longitude') or not data.get('description') or not data.get('owner_id'):
+        return jsonify({"message": "Missing data: latitude, longitude, description, or owner_id"}), 400
+
+    owner = next((u for u in users if u['id'] == data['owner_id']), None)
+    if not owner:
+        return jsonify({"message": "Owner not found"}), 404
 
     slot = {
         "id": len(parking_slots) + 1,
         "latitude": data['latitude'],
         "longitude": data['longitude'],
-        "description": data.get('description', ""),  # Optionnel : Description ou adresse
-        "status": "available"  # Par défaut, l'emplacement est disponible
+        "description": data['description'],
+        "status": "available",
+        "owner_id": owner['id']
     }
     parking_slots.append(slot)
     return jsonify({"message": "Parking slot added successfully!", "slot": slot}), 201
 
-# Route : Lister les emplacements proches
+# Route : Lister les places de parking
 @app.route('/list_parking_slots', methods=['GET'])
 def list_parking_slots():
-    latitude = request.args.get('latitude', type=float)
-    longitude = request.args.get('longitude', type=float)
+    return jsonify({"parking_slots": parking_slots}), 200
 
-    if not latitude or not longitude:
-        return jsonify({"message": "Missing data: latitude and longitude are required"}), 400
-
-    # Filtrer les emplacements proches (moins de 5 km)
-    nearby_slots = [
-        slot for slot in parking_slots
-        if calculate_distance(latitude, longitude, slot['latitude'], slot['longitude']) <= 5
-    ]
-    return jsonify({"parking_slots": nearby_slots}), 200
-
-# Route : Réserver une place
+# Route : Réserver une place de parking (avec paiement)
 @app.route('/reserve', methods=['POST'])
 def reserve_parking_slot():
+    if not request.is_json:
+        return jsonify({"message": "Request must be JSON"}), 400
+
     data = request.json
-    slot_id = data.get('slot_id')
-    user_id = data.get('user_id')
+    if not data.get('user_id') or not data.get('slot_id'):
+        return jsonify({"message": "Missing data: user_id or slot_id"}), 400
 
-    if not slot_id or not user_id:
-        return jsonify({"message": "Missing data: slot_id and user_id are required"}), 400
+    user = next((u for u in users if u['id'] == data['user_id']), None)
+    slot = next((s for s in parking_slots if s['id'] == data['slot_id']), None)
 
-    # Vérifier si la place existe et est disponible
-    slot = next((s for s in parking_slots if s['id'] == slot_id and s['status'] == "available"), None)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
     if not slot:
-        return jsonify({"message": "Slot not available or does not exist!"}), 400
+        return jsonify({"message": "Parking slot not found"}), 404
+    if slot['status'] == "reserved":
+        return jsonify({"message": "Parking slot already reserved"}), 400
 
-    # Réserver la place
+    if user['balance'] < 2.0:
+        return jsonify({"message": "Insufficient balance"}), 400
+
+    # Paiement
+    user['balance'] -= 2.0  # Débiter l'utilisateur
+    slot_owner = next((u for u in users if u['id'] == slot.get('owner_id')), None)
+    if slot_owner:
+        slot_owner['balance'] += 1.0  # Créditer le propriétaire de la place
+
+    # Enregistrer la transaction
+    transaction = {
+        "id": len(transactions) + 1,
+        "user_id": user['id'],
+        "slot_id": slot['id'],
+        "amount": 2.0,
+        "application_fee": 1.0,
+        "owner_credit": 1.0
+    }
+    transactions.append(transaction)
+
+    # Marquer la place comme réservée
     slot['status'] = "reserved"
     reservation = {
         "id": len(reservations) + 1,
-        "user_id": user_id,
-        "slot_id": slot_id
+        "user_id": user['id'],
+        "slot_id": slot['id']
     }
     reservations.append(reservation)
-    return jsonify({"message": "Slot reserved successfully!", "reservation": reservation}), 201
+
+    return jsonify({"message": "Slot reserved successfully!", "reservation": reservation, "transaction": transaction}), 201
 
 # Route : Annuler une réservation
 @app.route('/cancel_reservation', methods=['POST'])
 def cancel_reservation():
+    if not request.is_json:
+        return jsonify({"message": "Request must be JSON"}), 400
+
     data = request.json
-    reservation_id = data.get('reservation_id')
+    if not data.get('reservation_id'):
+        return jsonify({"message": "Missing data: reservation_id"}), 400
 
-    if not reservation_id:
-        return jsonify({"message": "Missing data: reservation_id is required"}), 400
-
-    # Trouver la réservation
-    reservation = next((r for r in reservations if r['id'] == reservation_id), None)
+    reservation = next((r for r in reservations if r['id'] == data['reservation_id']), None)
     if not reservation:
-        return jsonify({"message": "Reservation not found!"}), 404
+        return jsonify({"message": "Reservation not found"}), 404
 
-    # Annuler la réservation et libérer la place
     slot = next((s for s in parking_slots if s['id'] == reservation['slot_id']), None)
     if slot:
         slot['status'] = "available"
-    reservations.remove(reservation)
 
+    reservations.remove(reservation)
     return jsonify({"message": "Reservation cancelled successfully!"}), 200
 
-# Route : Vérifier les places disponibles proches
-@app.route('/check_availability', methods=['GET'])
-def check_availability():
-    latitude = request.args.get('latitude', type=float)
-    longitude = request.args.get('longitude', type=float)
+# Route : Vérifier le solde d’un utilisateur
+@app.route('/balance/<int:user_id>', methods=['GET'])
+def get_balance(user_id):
+    user = next((u for u in users if u['id'] == user_id), None)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
 
-    if not latitude or not longitude:
-        return jsonify({"message": "Missing data: latitude and longitude are required"}), 400
+    return jsonify({"balance": user['balance']}), 200
 
-    # Filtrer les places disponibles proches (moins de 5 km)
-    available_slots = [
-        slot for slot in parking_slots
-        if slot['status'] == "available" and calculate_distance(latitude, longitude, slot['latitude'], slot['longitude']) <= 5
-    ]
-    return jsonify({"available_slots": available_slots}), 200
+# Route : Consulter les transactions
+@app.route('/transactions', methods=['GET'])
+def list_transactions():
+    return jsonify({"transactions": transactions}), 200
 
 # Route : Accueil
 @app.route('/', methods=['GET'])
@@ -140,4 +152,4 @@ def home():
     return jsonify({"message": "Welcome to the Parking API"}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
