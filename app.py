@@ -21,17 +21,22 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 @app.route('/register', methods=['POST'])
 def register_user():
     data = request.json
+    print("Data received:", data)  # Ajoute cette ligne pour afficher les données dans les logs Render
+
+    if not data:
+        return jsonify({"message": "No data received"}), 400
     if not data.get('email') or not data.get('password') or not data.get('plate_number'):
         return jsonify({"message": "Missing data"}), 400
 
     user = {
         "id": len(users) + 1,
         "email": data['email'],
-        "password": data['password'],  # ⚠️ À hacher en production
+        "password": data['password'],
         "plate_number": data['plate_number']
     }
     users.append(user)
     return jsonify({"message": "User registered successfully!", "user": user}), 201
+
 
 # Route : Ajouter un emplacement de parking
 @app.route('/add_parking_slot', methods=['POST'])
